@@ -13,7 +13,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#06080F"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.surveysnap.pro",
@@ -46,12 +48,27 @@
       }
     },
     "plugins": [
-      ["expo-camera", { "cameraPermission": "Allow SurveySnap Pro to access your camera to capture survey photos." }],
-      ["expo-location", { "locationAlwaysAndWhenInUsePermission": "Allow SurveySnap Pro to use your location to optionally geotag survey photos." }],
-      ["expo-media-library", { "photosPermission": "Allow SurveySnap Pro to access photos.", "savePhotosPermission": "Allow SurveySnap Pro to save survey photos." }],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow SurveySnap Pro to access your camera to capture survey photos."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow SurveySnap Pro to use your location to optionally geotag survey photos."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow SurveySnap Pro to access photos.",
+          "savePhotosPermission": "Allow SurveySnap Pro to save survey photos."
+        }
+      ],
       "react-native-google-mobile-ads"
     ],
     "extra": {}
-    }
   }
 }
