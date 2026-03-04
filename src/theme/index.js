@@ -44,16 +44,16 @@ export const Colors = {
 };
 
 export const Typography = {
-  // Cormorant Garant — optical/scientific feel (used by luxury optics brands)
+  // Cormorant Garamond — optical/scientific feel (used by luxury optics brands)
   display: {
-    fontFamily: 'CormorantGarant_700Bold',
+    fontFamily: 'CormorantGaramond_700Bold',
     letterSpacing: 1,
   },
   displayItalic: {
-    fontFamily: 'CormorantGarant_700Bold_Italic',
+    fontFamily: 'CormorantGaramond_700Bold_Italic',
   },
   heading: {
-    fontFamily: 'CormorantGarant_600SemiBold',
+    fontFamily: 'CormorantGaramond_600SemiBold',
     letterSpacing: 0.5,
   },
 
