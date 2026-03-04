@@ -32,7 +32,7 @@ export async function getProjects() {
 
 export async function createProject(name) {
   const meta = await loadMeta();
-  const id = `p_${Date.now()}`;
+  const id  = `p_${Date.now()}`;
   const dir = `${ROOT}${id}/`;
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   const proj = { id, name, dir, createdAt: new Date().toISOString(), folders: [] };
@@ -52,20 +52,35 @@ export async function deleteProject(pid) {
   await saveMeta(meta);
 }
 
+// FIX: rename only updates metadata — physical dir path stays the same
+export async function renameProject(pid, newName) {
+  const meta = await loadMeta();
+  const proj = (meta.projects || []).find(p => p.id === pid);
+  if (!proj) throw new Error('Project not found');
+  proj.name = newName.trim();
+  await saveMeta(meta);
+}
+
 // ── Folders ──────────────────────────────────────────────────────────────────
+
+// FIX: less aggressive sanitisation — only strip characters unsafe for filesystem paths
+function sanitiseFolderName(name) {
+  return name.replace(/[/\\:*?"<>|]/g, '').trim();
+}
+
 export async function createFolder(projectId, parentDir, folderName, parentFolders = []) {
-  const safe = folderName.replace(/[^\w\s\-]/g, '').trim();
-  const dir = `${parentDir}${safe}/`;
+  const safe = sanitiseFolderName(folderName);
+  // Ensure unique dir name by appending timestamp
+  const dir = `${parentDir}${safe}_${Date.now()}/`;
   await FileSystem.makeDirectoryAsync(dir, { intermediates: true });
   const folder = {
     id: `f_${Date.now()}`,
-    name: safe,
+    name: safe,           // display name — can be renamed without touching dir
     dir,
     createdAt: new Date().toISOString(),
     subfolders: [],
   };
 
-  // Recursively update project meta
   const meta = await loadMeta();
   const proj = (meta.projects || []).find(p => p.id === projectId);
   if (!proj) return folder;
@@ -73,7 +88,6 @@ export async function createFolder(projectId, parentDir, folderName, parentFolde
   if (parentDir === proj.dir) {
     proj.folders = [...(proj.folders || []), folder];
   } else {
-    // Find parent folder in tree and append
     const appendTo = (folders) => {
       for (const f of folders) {
         if (f.dir === parentDir) { f.subfolders = [...(f.subfolders || []), folder]; return true; }
@@ -87,10 +101,21 @@ export async function createFolder(projectId, parentDir, folderName, parentFolde
   return folder;
 }
 
-export async function getFolderTree(projectId) {
+// FIX: rename folder only updates display name in metadata — no filesystem move
+export async function renameFolder(projectId, folderId, newName) {
   const meta = await loadMeta();
   const proj = (meta.projects || []).find(p => p.id === projectId);
-  return proj ? (proj.folders || []) : [];
+  if (!proj) throw new Error('Project not found');
+
+  const findAndRename = (folders) => {
+    for (const f of folders) {
+      if (f.id === folderId) { f.name = newName.trim(); return true; }
+      if (f.subfolders && findAndRename(f.subfolders)) return true;
+    }
+    return false;
+  };
+  findAndRename(proj.folders || []);
+  await saveMeta(meta);
 }
 
 // ── Photos ───────────────────────────────────────────────────────────────────
@@ -107,9 +132,9 @@ export async function getPhotos(dir) {
 }
 
 export async function savePhoto(dir, tempUri, opts = {}) {
-  const ts = Date.now();
-  const lat = opts.lat != null ? `_${opts.lat.toFixed(5)}` : '';
-  const lng = opts.lng != null ? `_${opts.lng.toFixed(5)}` : '';
+  const ts  = Date.now();
+  const lat = opts.lat != null ? `_${opts.lat.toFixed(5)}`  : '';
+  const lng = opts.lng != null ? `_${opts.lng.toFixed(5)}`  : '';
   const wm  = opts.watermark ? '_WM' : '';
   const name = `SS_${ts}${lat}${lng}${wm}.jpg`;
   const dest = `${dir}${name}`;
@@ -121,35 +146,51 @@ export async function deletePhoto(uri) {
   await FileSystem.deleteAsync(uri, { idempotent: true });
 }
 
+// Move a photo to a different folder directory
+export async function movePhoto(fromUri, toDir) {
+  const filename = fromUri.split('/').pop();
+  const dest = `${toDir}${filename}`;
+  await FileSystem.moveAsync({ from: fromUri, to: dest });
+  return { name: filename, uri: dest };
+}
+
+// FIX: parallel counting using Promise.all instead of sequential await
 export async function countPhotosInTree(folder) {
-  let count = 0;
-  const photos = await getPhotos(folder.dir);
-  count += photos.length;
-  for (const sub of (folder.subfolders || [])) {
-    count += await countPhotosInTree(sub);
+  const [directPhotos, subCounts] = await Promise.all([
+    getPhotos(folder.dir).then(p => p.length),
+    Promise.all((folder.subfolders || []).map(sub => countPhotosInTree(sub))),
+  ]);
+  return directPhotos + subCounts.reduce((a, b) => a + b, 0);
+}
+
+// Collect all photos recursively from a folder tree
+export async function getAllPhotosInTree(folder) {
+  const [direct, subPhotos] = await Promise.all([
+    getPhotos(folder.dir),
+    Promise.all((folder.subfolders || []).map(sub => getAllPhotosInTree(sub))),
+  ]);
+  return [...direct, ...subPhotos.flat()];
+}
+
+// Export entire project as ZIP
+export async function exportProjectAsZip(projectId) {
+  const meta = await loadMeta();
+  const proj = (meta.projects || []).find(p => p.id === projectId);
+  if (!proj) throw new Error('Project not found');
+
+  const zipPath = `${FileSystem.cacheDirectory}${proj.name.replace(/\s+/g, '_')}_export.zip`;
+
+  if (typeof FileSystem.createZipAsync === 'function') {
+    await FileSystem.createZipAsync({
+      sourceDirectory: proj.dir,
+      outputFilePath: zipPath,
+    });
+    return zipPath;
   }
-  return count;
+  throw new Error('ZIP export requires a newer version of expo-file-system.');
 }
 
-// ── Sizing ───────────────────────────────────────────────────────────────────
-export async function getDirSize(dir) {
-  try {
-    const files = await FileSystem.readDirectoryAsync(dir);
-    let total = 0;
-    for (const f of files) {
-      const info = await FileSystem.getInfoAsync(`${dir}${f}`, { size: true });
-      if (info.size) total += info.size;
-    }
-    return total;
-  } catch { return 0; }
-}
-
-export function fmtSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1048576).toFixed(2)} MB`;
-}
-
+// ── Helpers ──────────────────────────────────────────────────────────────────
 export function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short', year: 'numeric',
@@ -161,4 +202,20 @@ export function fmtDateTime(iso) {
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
+}
+
+// Parse timestamp from a SurveySnap photo filename
+// Format: SS_{timestamp}[_{lat}][_{lng}][_WM].jpg
+export function parsePhotoMeta(filename) {
+  const base = filename.replace(/_WM\.jpg$/i, '').replace(/\.jpg$/i, '');
+  const parts = base.split('_');
+  // parts[0]='SS', parts[1]=timestamp, parts[2]=lat?, parts[3]=lng?
+  const ts  = parseInt(parts[1], 10);
+  const lat = parts.length >= 4 ? parseFloat(parts[2]) : NaN;
+  const lng = parts.length >= 4 ? parseFloat(parts[3]) : NaN;
+  return {
+    timestamp: isNaN(ts) ? null : new Date(ts),
+    lat: isNaN(lat) ? null : lat,
+    lng: isNaN(lng) ? null : lng,
+  };
 }
