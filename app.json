@@ -1,0 +1,58 @@
+{
+  "expo": {
+    "name": "SurveySnap Pro",
+    "slug": "surveysnap-pro",
+    "version": "1.0.0",
+    "sdkVersion": "55.0.0",
+    "orientation": "portrait",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#06080F"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.surveysnap.pro",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SurveySnap Pro uses your camera to capture high-quality survey photographs.",
+        "NSLocationWhenInUseUsageDescription": "SurveySnap Pro optionally tags your photos with GPS coordinates for survey records.",
+        "NSPhotoLibraryAddUsageDescription": "SurveySnap Pro saves survey photos to your device.",
+        "NSPhotoLibraryUsageDescription": "SurveySnap Pro accesses photos for PDF reports and sharing.",
+        "GADApplicationIdentifier": "ca-app-pub-6365268430069678~9213608900"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#06080F"
+      },
+      "package": "com.surveysnap.pro",
+      "versionCode": 1,
+      "permissions": [
+        "CAMERA",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "INTERNET"
+      ],
+      "googleServicesFile": "./google-services.json",
+      "config": {
+        "googleMobileAdsAppId": "ca-app-pub-6365268430069678~9213608900"
+      }
+    },
+    "plugins": [
+      ["expo-camera", { "cameraPermission": "Allow SurveySnap Pro to access your camera to capture survey photos." }],
+      ["expo-location", { "locationAlwaysAndWhenInUsePermission": "Allow SurveySnap Pro to use your location to optionally geotag survey photos." }],
+      ["expo-media-library", { "photosPermission": "Allow SurveySnap Pro to access photos.", "savePhotosPermission": "Allow SurveySnap Pro to save survey photos." }],
+      "react-native-google-mobile-ads"
+    ],
+    "extra": {
+      "eas": { "projectId": "msmpiU3tt_iJqLeTFuW9yZTgepAhd_pLUVQkTLgi" }
+    }
+  }
+}

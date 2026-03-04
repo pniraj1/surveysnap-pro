@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "138358853531",
+    "project_id": "surveysnap-pro",
+    "storage_bucket": "surveysnap-pro.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:138358853531:android:f31cafc3bda73246f09b3e",
+        "android_client_info": {
+          "package_name": "com.surveysnap.pro"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDWQm-fObMGN7KJmkCMI5CVRbs5I6p3tbY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
