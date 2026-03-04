@@ -19,14 +19,15 @@ import {
 } from '@expo-google-fonts/nunito';
 import MobileAds from 'react-native-google-mobile-ads';
 
-import HomeScreen    from './src/screens/HomeScreen';
-import ProjectScreen from './src/screens/ProjectScreen';
-import CameraScreen  from './src/screens/CameraScreen';
-import GalleryScreen from './src/screens/GalleryScreen';
+import HomeScreen     from './src/screens/HomeScreen';
+import ProjectScreen  from './src/screens/ProjectScreen';
+import CameraScreen   from './src/screens/CameraScreen';
+import GalleryScreen  from './src/screens/GalleryScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
-import { Colors }    from './src/theme';
-import { initAds }   from './src/utils/admob';
-import { boot }      from './src/utils/fs';
+import ErrorBoundary  from './src/components/ErrorBoundary';
+import { Colors }     from './src/theme';
+import { initAds }    from './src/utils/admob';
+import { boot }       from './src/utils/fs';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -83,24 +84,38 @@ export default function App() {
     <SafeAreaProvider>
       <View style={{ flex: 1, backgroundColor: Colors.bg }} onLayout={onLayout}>
         <StatusBar style="light" />
-        <NavigationContainer theme={NavTheme}>
-          <Stack.Navigator
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: Colors.bg },
-              animation: 'fade_from_bottom',
-              animationDuration: 200,
-            }}
-          >
-            <Stack.Screen name="Home"     component={HomeScreen} />
-            <Stack.Screen name="Project"  component={ProjectScreen} />
-            <Stack.Screen name="Camera"   component={CameraScreen}
-              options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="Gallery"  component={GalleryScreen} />
-            <Stack.Screen name="Settings" component={SettingsScreen} />
-          </Stack.Navigator>
-        </NavigationContainer>
+        {/* FIX: ErrorBoundary wraps the entire navigation tree */}
+        <ErrorBoundary>
+          <NavigationContainer theme={NavTheme}>
+            <Stack.Navigator
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: Colors.bg },
+                animation: 'fade_from_bottom',
+                animationDuration: 200,
+              }}
+            >
+              <Stack.Screen name="Home"     component={withErrorBoundary(HomeScreen)} />
+              <Stack.Screen name="Project"  component={withErrorBoundary(ProjectScreen)} />
+              <Stack.Screen name="Camera"   component={withErrorBoundary(CameraScreen)}
+                options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="Gallery"  component={withErrorBoundary(GalleryScreen)} />
+              <Stack.Screen name="Settings" component={withErrorBoundary(SettingsScreen)} />
+            </Stack.Navigator>
+          </NavigationContainer>
+        </ErrorBoundary>
       </View>
     </SafeAreaProvider>
   );
+}
+
+// Wrap each screen individually so errors don't crash the whole app
+function withErrorBoundary(ScreenComponent) {
+  return function WrappedScreen(props) {
+    return (
+      <ErrorBoundary>
+        <ScreenComponent {...props} />
+      </ErrorBoundary>
+    );
+  };
 }
