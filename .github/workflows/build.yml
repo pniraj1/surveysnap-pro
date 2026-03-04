@@ -2,39 +2,38 @@ name: Build Android AAB
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android AAB (Gradle)
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      # Delete package-lock.json so npm respects the exact versions in package.json
+      # Without this, the lock file overrides our version pins (e.g. keeps admob at v14)
+      - name: Remove package-lock to force fresh resolution
+        run: rm -f package-lock.json
+
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: Generate native Android project
+      - name: Prebuild Android
         run: npx expo prebuild --platform android --clean
 
       - name: Decode keystore
-        run: |
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --decode > android/app/surveysnap.jks
+        run: echo "${{ secrets.KEYSTORE_FILE }}" | base64 --decode > android/app/surveysnap.jks
 
       - name: Build release AAB
         run: |
