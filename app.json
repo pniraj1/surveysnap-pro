@@ -51,8 +51,7 @@
       ["expo-media-library", { "photosPermission": "Allow SurveySnap Pro to access photos.", "savePhotosPermission": "Allow SurveySnap Pro to save survey photos." }],
       "react-native-google-mobile-ads"
     ],
-    "extra": {
-      "eas": { "projectId": "f0d4c9a5-83b8-49dc-bf8c-4627695425c5" }
+    "extra": {}
     }
   }
 }
