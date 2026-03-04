@@ -1,30 +1,46 @@
 // src/screens/ProjectScreen.js — Folder Manager
-// Key feature: open existing folder → add more photos anytime
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   TextInput, Modal, Alert, Pressable, Dimensions, StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import * as Sharing from 'expo-sharing';
 import { Colors, Typography, Spacing, Radii, Shadow } from '../theme';
 import AdBanner from '../components/BannerAd';
 import { SnapMark } from '../components/SurveySnapLogo';
-import { createFolder, getProjects, getPhotos, countPhotosInTree, fmtDate } from '../utils/fs';
+import {
+  createFolder, getProjects, getPhotos, countPhotosInTree,
+  renameFolder, getAllPhotosInTree, fmtDate,
+} from '../utils/fs';
+import { generateProjectPDF, sharePDF } from '../utils/pdfReport';
 
 const { width } = Dimensions.get('window');
-
 const FOLDER_COLORS = ['#2563EB', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#22D3EE'];
 
 export default function ProjectScreen({ route, navigation }) {
   const { project } = route.params;
-  const [crumbs, setCrumbs] = useState([{ name: project.name, dir: project.dir, id: project.id, isRoot: true }]);
-  const [folders, setFolders] = useState([]);
+  const [crumbs, setCrumbs]         = useState([{ name: project.name, dir: project.dir, id: project.id, isRoot: true }]);
+  const [folders, setFolders]       = useState([]);
   const [photoCounts, setPhotoCounts] = useState({});
-  const [showModal, setShowModal] = useState(false);
+  const [showModal, setShowModal]   = useState(false);
   const [folderName, setFolderName] = useState('');
   const [currentDirPhotos, setCurrentDirPhotos] = useState(0);
+
+  // Rename folder
+  const [renameModal, setRenameModal]   = useState(false);
+  const [renameTarget, setRenameTarget] = useState(null);
+  const [renameName, setRenameName]     = useState('');
+
+  // Action sheet
+  const [actionSheet, setActionSheet]   = useState(false);
+  const [actionTarget, setActionTarget] = useState(null);
+
+  // Project PDF
+  const [exportingPDF, setExportingPDF] = useState(false);
 
   const current = crumbs[crumbs.length - 1];
 
@@ -33,23 +49,20 @@ export default function ProjectScreen({ route, navigation }) {
     const proj = projects.find(p => p.id === project.id);
     if (!proj) return;
 
-    // Traverse to current folder in tree
     let foldersHere = proj.folders || [];
     for (let i = 1; i < crumbs.length; i++) {
       const target = crumbs[i].dir;
-      const found = foldersHere.find(f => f.dir === target);
-      foldersHere = found ? (found.subfolders || []) : [];
+      const found  = foldersHere.find(f => f.dir === target);
+      foldersHere  = found ? (found.subfolders || []) : [];
     }
     setFolders(foldersHere);
 
-    // Count photos per subfolder
     const counts = {};
-    for (const f of foldersHere) {
-      counts[f.id] = await countPhotosInTree(f);
-    }
+    await Promise.all(
+      foldersHere.map(async (f) => { counts[f.id] = await countPhotosInTree(f); })
+    );
     setPhotoCounts(counts);
 
-    // Photos directly in this dir
     const dirPhotos = await getPhotos(current.dir);
     setCurrentDirPhotos(dirPhotos.length);
   }, [crumbs, project.id]);
@@ -64,45 +77,74 @@ export default function ProjectScreen({ route, navigation }) {
     } catch (e) { Alert.alert('Error', 'Could not create folder: ' + e.message); }
   };
 
-  const goInto = (folder) => {
-    setCrumbs(prev => [...prev, { name: folder.name, dir: folder.dir, id: folder.id }]);
+  const openRename = (folder) => {
+    setActionSheet(false);
+    setRenameTarget(folder);
+    setRenameName(folder.name);
+    setRenameModal(true);
   };
 
-  const goCrumb = (index) => {
-    setCrumbs(prev => prev.slice(0, index + 1));
+  const handleRename = async () => {
+    if (!renameName.trim() || !renameTarget) return;
+    try {
+      await renameFolder(project.id, renameTarget.id, renameName.trim());
+      setRenameModal(false);
+      setRenameTarget(null);
+      load();
+    } catch { Alert.alert('Error', 'Could not rename folder'); }
   };
 
-  const goBack = () => {
-    if (crumbs.length > 1) setCrumbs(prev => prev.slice(0, -1));
-    else navigation.goBack();
-  };
+  const goInto    = (folder) => setCrumbs(prev => [...prev, { name: folder.name, dir: folder.dir, id: folder.id }]);
+  const goCrumb   = (index)  => setCrumbs(prev => prev.slice(0, index + 1));
+  const goBack    = () => { if (crumbs.length > 1) setCrumbs(prev => prev.slice(0, -1)); else navigation.goBack(); };
 
-  const openCamera = (dir, name) => {
-    navigation.navigate('Camera', {
-      folderDir: dir || current.dir,
-      folderName: name || current.name,
-      projectId: project.id,
-      projectName: project.name,
-    });
-  };
+  const openCamera  = (dir, name) => navigation.navigate('Camera', { folderDir: dir || current.dir, folderName: name || current.name, projectId: project.id, projectName: project.name });
+  // FIX: pass projectId to Gallery so it can support move-photo feature
+  const openGallery = (dir, name) => navigation.navigate('Gallery', { folderDir: dir || current.dir, folderName: name || current.name, projectName: project.name, projectId: project.id });
 
-  const openGallery = (dir, name) => {
-    navigation.navigate('Gallery', {
-      folderDir: dir || current.dir,
-      folderName: name || current.name,
-      projectName: project.name,
-    });
+  // NEW: export entire project as PDF
+  const handleProjectPDF = async () => {
+    setExportingPDF(true);
+    try {
+      const projects = await getProjects();
+      const proj     = projects.find(p => p.id === project.id);
+      if (!proj) throw new Error('Project not found');
+
+      // Collect all folders with their photos
+      const collectFolders = async (folderList) => {
+        const result = [];
+        for (const f of folderList) {
+          const photos = await getAllPhotosInTree(f);
+          if (photos.length > 0) result.push({ name: f.name, photos });
+        }
+        return result;
+      };
+
+      // Also include photos directly in the project root
+      const rootPhotos = await getPhotos(proj.dir);
+      const folderData = await collectFolders(proj.folders || []);
+      const allData    = rootPhotos.length > 0
+        ? [{ name: 'Root', photos: rootPhotos }, ...folderData]
+        : folderData;
+
+      if (allData.length === 0) { Alert.alert('No Photos', 'This project has no photos yet.'); return; }
+
+      const pdfUri = await generateProjectPDF({ folders: allData, projectName: project.name });
+      await sharePDF(pdfUri, project.name);
+    } catch (e) {
+      Alert.alert('Export Failed', e.message || 'Could not generate project PDF.');
+    } finally {
+      setExportingPDF(false);
+    }
   };
 
   const renderFolder = ({ item, index }) => {
     const color = FOLDER_COLORS[index % FOLDER_COLORS.length];
     const count = photoCounts[item.id] ?? 0;
-
     return (
       <View style={styles.folderCard}>
         <LinearGradient colors={Colors.gradCard} style={styles.folderGrad}>
           <View style={[styles.folderTop, { backgroundColor: color }]} />
-
           <TouchableOpacity style={styles.folderMain} onPress={() => goInto(item)} activeOpacity={0.8}>
             <View style={[styles.folderIconWrap, { borderColor: color + '50' }]}>
               <Text style={[styles.folderIcon, { color }]}>◈</Text>
@@ -114,28 +156,19 @@ export default function ProjectScreen({ route, navigation }) {
 
           <View style={styles.folderDivider} />
 
-          {/* Quick actions — the key UX feature */}
           <View style={styles.folderActions}>
-            <TouchableOpacity
-              style={[styles.folderActionBtn, { borderColor: color + '40' }]}
-              onPress={() => openCamera(item.dir, item.name)}
-            >
+            <TouchableOpacity style={[styles.folderActionBtn, { borderColor: color + '40' }]} onPress={() => openCamera(item.dir, item.name)}>
               <Text style={styles.folderActionIco}>📷</Text>
               <Text style={[styles.folderActionTxt, { color }]}>Add Photos</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.folderActionBtn}
-              onPress={() => openGallery(item.dir, item.name)}
-            >
+            <TouchableOpacity style={styles.folderActionBtn} onPress={() => openGallery(item.dir, item.name)}>
               <Text style={styles.folderActionIco}>🖼</Text>
               <Text style={styles.folderActionTxt}>Gallery</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.folderActionBtn}
-              onPress={() => goInto(item)}
-            >
-              <Text style={styles.folderActionIco}>📂</Text>
-              <Text style={styles.folderActionTxt}>Sub-folders</Text>
+            {/* FIX: ⋯ opens action sheet for rename/subfolders */}
+            <TouchableOpacity style={styles.folderActionBtn} onPress={() => { setActionTarget(item); setActionSheet(true); }}>
+              <Text style={styles.folderActionIco}>⋯</Text>
+              <Text style={styles.folderActionTxt}>More</Text>
             </TouchableOpacity>
           </View>
         </LinearGradient>
@@ -147,7 +180,6 @@ export default function ProjectScreen({ route, navigation }) {
     <View style={styles.root}>
       <StatusBar barStyle="light-content" />
 
-      {/* Header */}
       <LinearGradient colors={['#0B1120', Colors.bg]} style={styles.header}>
         <SafeAreaView edges={['top']}>
           <View style={styles.headerRow}>
@@ -160,16 +192,12 @@ export default function ProjectScreen({ route, navigation }) {
             </View>
             <SnapMark size={28} />
           </View>
-
-          {/* Breadcrumb */}
           {crumbs.length > 1 && (
             <View style={styles.breadcrumb}>
               {crumbs.map((c, i) => (
                 <TouchableOpacity key={i} style={styles.crumbItem} onPress={() => goCrumb(i)}>
                   {i > 0 && <Text style={styles.crumbSep}>›</Text>}
-                  <Text style={[styles.crumbTxt, i === crumbs.length - 1 && styles.crumbActive]} numberOfLines={1}>
-                    {c.name}
-                  </Text>
+                  <Text style={[styles.crumbTxt, i === crumbs.length - 1 && styles.crumbActive]} numberOfLines={1}>{c.name}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -179,7 +207,6 @@ export default function ProjectScreen({ route, navigation }) {
 
       <View style={styles.ruler} />
 
-      {/* Action bar */}
       <View style={styles.actionBar}>
         <TouchableOpacity style={styles.actionBtn} onPress={() => setShowModal(true)}>
           <View style={styles.actionBtnInner}>
@@ -193,22 +220,29 @@ export default function ProjectScreen({ route, navigation }) {
             <Text style={[styles.actionBtnTxt, { color: '#fff' }]}>Capture Here</Text>
           </LinearGradient>
         </TouchableOpacity>
+        {/* NEW: Project-level PDF export */}
+        {current.isRoot && (
+          <TouchableOpacity style={styles.actionBtn} onPress={handleProjectPDF} disabled={exportingPDF}>
+            <View style={styles.actionBtnInner}>
+              {exportingPDF
+                ? <ActivityIndicator size="small" color={Colors.blue} />
+                : <Text style={styles.actionBtnIco}>📄</Text>}
+              <Text style={styles.actionBtnTxt}>Full PDF</Text>
+            </View>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Current dir photo quick-access bar */}
       {currentDirPhotos > 0 && (
         <TouchableOpacity style={styles.photoPill} onPress={() => openGallery()}>
           <LinearGradient colors={['rgba(37,99,235,0.15)', 'rgba(37,99,235,0.05)']} style={styles.photoPillGrad} start={{ x: 0 }} end={{ x: 1 }}>
             <Text style={styles.photoPillIco}>📸</Text>
-            <Text style={styles.photoPillTxt}>
-              {currentDirPhotos} photo{currentDirPhotos !== 1 ? 's' : ''} in this folder
-            </Text>
+            <Text style={styles.photoPillTxt}>{currentDirPhotos} photo{currentDirPhotos !== 1 ? 's' : ''} in this folder</Text>
             <Text style={styles.photoPillAction}>View & Export →</Text>
           </LinearGradient>
         </TouchableOpacity>
       )}
 
-      {/* Folder list */}
       <FlatList
         data={folders}
         keyExtractor={f => f.id}
@@ -219,16 +253,14 @@ export default function ProjectScreen({ route, navigation }) {
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>◈</Text>
             <Text style={styles.emptyTitle}>No Subfolders</Text>
-            <Text style={styles.emptySub}>
-              Add subfolders to organise by area{'\n'}or shoot directly in this folder
-            </Text>
+            <Text style={styles.emptySub}>Add subfolders to organise by area{'\n'}or shoot directly in this folder</Text>
           </View>
         )}
       />
 
       <AdBanner />
 
-      {/* Add folder modal */}
+      {/* ── Add folder modal ── */}
       <Modal visible={showModal} transparent animationType="fade" onRequestClose={() => setShowModal(false)}>
         <Pressable style={styles.overlay} onPress={() => setShowModal(false)}>
           <Pressable style={styles.modal} onPress={() => {}}>
@@ -238,7 +270,7 @@ export default function ProjectScreen({ route, navigation }) {
               <Text style={styles.modalSub}>inside · {current.name}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="e.g. North Elevation, Level 3, Roof"
+                placeholder="e.g. North Elevation, Level 3 (East Wing)"
                 placeholderTextColor={Colors.textMuted}
                 value={folderName} onChangeText={setFolderName}
                 autoFocus onSubmitEditing={handleAddFolder}
@@ -258,76 +290,139 @@ export default function ProjectScreen({ route, navigation }) {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* ── Rename folder modal ── */}
+      <Modal visible={renameModal} transparent animationType="fade" onRequestClose={() => setRenameModal(false)}>
+        <Pressable style={styles.overlay} onPress={() => setRenameModal(false)}>
+          <Pressable style={styles.modal} onPress={() => {}}>
+            <LinearGradient colors={['#1A2538', '#0C1220']} style={styles.modalGrad}>
+              <View style={styles.modalBar} />
+              <Text style={styles.modalTitle}>Rename Folder</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Folder name"
+                placeholderTextColor={Colors.textMuted}
+                value={renameName} onChangeText={setRenameName}
+                autoFocus onSubmitEditing={handleRename}
+                selectionColor={Colors.blue}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setRenameModal(false)}>
+                  <Text style={styles.cancelTxt}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.createBtn, !renameName.trim() && { opacity: 0.3 }]} onPress={handleRename} disabled={!renameName.trim()}>
+                  <LinearGradient colors={Colors.gradBlue} style={styles.createBtnGrad} start={{ x: 0 }} end={{ x: 1 }}>
+                    <Text style={styles.createTxt}>Rename</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            </LinearGradient>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ── Folder action sheet ── */}
+      <Modal visible={actionSheet} transparent animationType="fade" onRequestClose={() => setActionSheet(false)}>
+        <Pressable style={styles.overlay} onPress={() => setActionSheet(false)}>
+          <Pressable style={styles.actionSheetWrap} onPress={() => {}}>
+            <LinearGradient colors={['#1A2538', '#0C1220']} style={styles.actionSheetGrad}>
+              <View style={styles.modalBar} />
+              <Text style={styles.actionSheetTitle} numberOfLines={1}>{actionTarget?.name}</Text>
+              <TouchableOpacity style={styles.actionSheetRow} onPress={() => { setActionSheet(false); goInto(actionTarget); }}>
+                <Text style={styles.actionSheetIco}>📂</Text>
+                <Text style={styles.actionSheetTxt}>Open Sub-folders</Text>
+              </TouchableOpacity>
+              <View style={styles.sheetDivider} />
+              <TouchableOpacity style={styles.actionSheetRow} onPress={() => openRename(actionTarget)}>
+                <Text style={styles.actionSheetIco}>✏️</Text>
+                <Text style={styles.actionSheetTxt}>Rename Folder</Text>
+              </TouchableOpacity>
+              <View style={styles.sheetDivider} />
+              <TouchableOpacity style={[styles.actionSheetRow, styles.sheetCancel]} onPress={() => setActionSheet(false)}>
+                <Text style={styles.cancelTxt}>Cancel</Text>
+              </TouchableOpacity>
+            </LinearGradient>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: Colors.bg },
-
+  root:   { flex: 1, backgroundColor: Colors.bg },
   header: { paddingHorizontal: Spacing.md, paddingBottom: Spacing.sm },
   headerRow: { flexDirection: 'row', alignItems: 'center', paddingTop: Spacing.sm },
-  backBtn: { width: 36, height: 36, borderRadius: Radii.circle, borderWidth: 0.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.sm },
-  backIco: { color: Colors.blue, fontSize: 18 },
+  backBtn:   { width: 36, height: 36, borderRadius: Radii.circle, borderWidth: 0.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center', marginRight: Spacing.sm },
+  backIco:   { color: Colors.blue, fontSize: 18 },
   headerMid: { flex: 1, marginRight: Spacing.sm },
   headerTitle: { ...Typography.uiBold, color: Colors.textPrimary, fontSize: 16 },
-  headerSub: { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
+  headerSub:   { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
 
   breadcrumb: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 4, marginTop: Spacing.sm, paddingBottom: 2 },
-  crumbItem: { flexDirection: 'row', alignItems: 'center' },
-  crumbSep: { color: Colors.blue, opacity: 0.5, marginHorizontal: 3, fontSize: 11 },
-  crumbTxt: { ...Typography.caption, color: Colors.textMuted, fontSize: 10 },
-  crumbActive: { color: Colors.cyan },
+  crumbItem:  { flexDirection: 'row', alignItems: 'center' },
+  crumbSep:   { color: Colors.blue, opacity: 0.5, marginHorizontal: 3, fontSize: 11 },
+  crumbTxt:   { ...Typography.caption, color: Colors.textMuted, fontSize: 10 },
+  crumbActive:{ color: Colors.cyan },
 
   ruler: { height: 0.5, backgroundColor: Colors.blue, opacity: 0.3, marginHorizontal: Spacing.md },
 
-  actionBar: { flexDirection: 'row', gap: Spacing.sm, padding: Spacing.md, paddingBottom: Spacing.sm },
-  actionBtn: { flex: 1, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, overflow: 'hidden' },
-  primaryBtn: { borderColor: Colors.blue, ...Shadow.blue },
-  actionBtnInner: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, gap: 6 },
-  primaryBtnGrad: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, gap: 6 },
-  actionBtnIco: { fontSize: 14 },
-  actionBtnTxt: { ...Typography.ui, color: Colors.textSecondary, fontSize: 12 },
+  actionBar:     { flexDirection: 'row', gap: Spacing.sm, padding: Spacing.md, paddingBottom: Spacing.sm },
+  actionBtn:     { flex: 1, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, overflow: 'hidden' },
+  primaryBtn:    { borderColor: Colors.blue, ...Shadow.blue },
+  actionBtnInner:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, gap: 6 },
+  primaryBtnGrad:{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, gap: 6 },
+  actionBtnIco:  { fontSize: 14 },
+  actionBtnTxt:  { ...Typography.ui, color: Colors.textSecondary, fontSize: 12 },
 
-  photoPill: { marginHorizontal: Spacing.md, marginBottom: Spacing.sm, borderRadius: Radii.pill, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border },
-  photoPillGrad: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: 9, gap: 6 },
+  photoPill:    { marginHorizontal: Spacing.md, marginBottom: Spacing.sm, borderRadius: Radii.pill, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border },
+  photoPillGrad:{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.md, paddingVertical: 9, gap: 6 },
   photoPillIco: { fontSize: 13 },
   photoPillTxt: { ...Typography.caption, color: Colors.textSecondary, fontSize: 11, flex: 1 },
   photoPillAction: { ...Typography.label, color: Colors.blue, fontSize: 8 },
 
   list: { padding: Spacing.md, paddingTop: 0, paddingBottom: 100 },
 
-  folderCard: { marginBottom: Spacing.md, borderRadius: Radii.lg, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border, ...Shadow.dark },
-  folderGrad: {},
-  folderTop: { height: 2 },
-  folderMain: { padding: Spacing.md, alignItems: 'center' },
-  folderIconWrap: { width: 46, height: 46, borderRadius: Radii.md, borderWidth: 0.5, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
-  folderIcon: { fontSize: 22 },
-  folderName: { ...Typography.uiBold, color: Colors.textPrimary, fontSize: 14, textAlign: 'center', marginBottom: 3 },
-  folderCount: { ...Typography.caption, color: Colors.textSecondary, fontSize: 11, marginBottom: 2 },
-  folderDate: { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
+  folderCard:    { marginBottom: Spacing.md, borderRadius: Radii.lg, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border, ...Shadow.dark },
+  folderGrad:    {},
+  folderTop:     { height: 2 },
+  folderMain:    { padding: Spacing.md, alignItems: 'center' },
+  folderIconWrap:{ width: 46, height: 46, borderRadius: Radii.md, borderWidth: 0.5, backgroundColor: 'rgba(0,0,0,0.3)', alignItems: 'center', justifyContent: 'center', marginBottom: Spacing.sm },
+  folderIcon:    { fontSize: 22 },
+  folderName:    { ...Typography.uiBold, color: Colors.textPrimary, fontSize: 14, textAlign: 'center', marginBottom: 3 },
+  folderCount:   { ...Typography.caption, color: Colors.textSecondary, fontSize: 11, marginBottom: 2 },
+  folderDate:    { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
   folderDivider: { height: 0.5, backgroundColor: Colors.borderSubtle },
   folderActions: { flexDirection: 'row' },
   folderActionBtn: { flex: 1, alignItems: 'center', paddingVertical: Spacing.sm, gap: 4, borderRightWidth: 0.5, borderRightColor: Colors.borderSubtle },
   folderActionIco: { fontSize: 16 },
   folderActionTxt: { ...Typography.caption, color: Colors.textSecondary, fontSize: 9 },
 
-  empty: { alignItems: 'center', paddingTop: 60, paddingHorizontal: Spacing.xl },
+  empty:     { alignItems: 'center', paddingTop: 60, paddingHorizontal: Spacing.xl },
   emptyIcon: { fontSize: 44, color: Colors.blue, opacity: 0.3, marginBottom: Spacing.lg },
-  emptyTitle: { ...Typography.heading, color: Colors.textSecondary, fontSize: 17, marginBottom: Spacing.sm },
-  emptySub: { ...Typography.uiLight, color: Colors.textMuted, textAlign: 'center', lineHeight: 20 },
+  emptyTitle:{ ...Typography.heading, color: Colors.textSecondary, fontSize: 17, marginBottom: Spacing.sm },
+  emptySub:  { ...Typography.uiLight, color: Colors.textMuted, textAlign: 'center', lineHeight: 20 },
 
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', alignItems: 'center', justifyContent: 'center' },
-  modal: { width: width - 48, borderRadius: Radii.xl, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border, ...Shadow.blue },
-  modalGrad: { padding: Spacing.xl },
+  overlay:  { flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', alignItems: 'center', justifyContent: 'center' },
+  modal:    { width: width - 48, borderRadius: Radii.xl, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border, ...Shadow.blue },
+  modalGrad:{ padding: Spacing.xl },
   modalBar: { position: 'absolute', top: 0, left: 0, right: 0, height: 2, backgroundColor: Colors.blue },
-  modalTitle: { ...Typography.heading, color: Colors.textPrimary, fontSize: 20, marginBottom: 4 },
-  modalSub: { ...Typography.caption, color: Colors.textMuted, marginBottom: Spacing.lg },
-  input: { width: '100%', height: 48, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, backgroundColor: Colors.surface, paddingHorizontal: Spacing.md, color: Colors.textPrimary, ...Typography.ui, fontSize: 14, marginBottom: Spacing.lg },
-  modalActions: { flexDirection: 'row', gap: 12 },
-  cancelBtn: { flex: 1, height: 44, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
-  cancelTxt: { ...Typography.label, color: Colors.textSecondary, fontSize: 9 },
-  createBtn: { flex: 1, borderRadius: Radii.md, overflow: 'hidden' },
-  createBtnGrad: { height: 44, alignItems: 'center', justifyContent: 'center' },
-  createTxt: { ...Typography.uiBold, color: '#fff', fontSize: 13 },
+  modalTitle:{ ...Typography.heading, color: Colors.textPrimary, fontSize: 20, marginBottom: 4 },
+  modalSub:  { ...Typography.caption, color: Colors.textMuted, marginBottom: Spacing.lg },
+  input:    { width: '100%', height: 48, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, backgroundColor: Colors.surface, paddingHorizontal: Spacing.md, color: Colors.textPrimary, ...Typography.ui, fontSize: 14, marginBottom: Spacing.lg },
+  modalActions:{ flexDirection: 'row', gap: 12 },
+  cancelBtn:   { flex: 1, height: 44, borderRadius: Radii.md, borderWidth: 0.5, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
+  cancelTxt:   { ...Typography.label, color: Colors.textSecondary, fontSize: 9 },
+  createBtn:   { flex: 1, borderRadius: Radii.md, overflow: 'hidden' },
+  createBtnGrad:{ height: 44, alignItems: 'center', justifyContent: 'center' },
+  createTxt:   { ...Typography.uiBold, color: '#fff', fontSize: 13 },
+
+  actionSheetWrap:  { width: width - 48, borderRadius: Radii.xl, overflow: 'hidden', borderWidth: 0.5, borderColor: Colors.border, ...Shadow.blue },
+  actionSheetGrad:  { paddingTop: Spacing.lg },
+  actionSheetTitle: { ...Typography.uiBold, color: Colors.textSecondary, fontSize: 12, textAlign: 'center', paddingHorizontal: Spacing.lg, marginBottom: Spacing.md },
+  actionSheetRow:   { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.md },
+  actionSheetIco:   { fontSize: 18, width: 28 },
+  actionSheetTxt:   { ...Typography.ui, color: Colors.textPrimary, fontSize: 15 },
+  sheetDivider:     { height: 0.5, backgroundColor: Colors.borderSubtle, marginHorizontal: Spacing.md },
+  sheetCancel:      { justifyContent: 'center', borderTopWidth: 0.5, borderTopColor: Colors.borderSubtle, marginTop: Spacing.sm },
 });
