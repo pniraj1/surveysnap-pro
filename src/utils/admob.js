@@ -14,18 +14,18 @@ export const AD_UNITS = {
 };
 
 // ── Interstitial (every 5 photos) ─────────────────────────────────────────
-let _interstitial = null;
+let _interstitial      = null;
 let _interstitialReady = false;
-let _photosSinceAd = 0;
+let _photosSinceAd     = 0;
 
 export function loadInterstitial() {
   _interstitial = InterstitialAd.createForAdRequest(AD_UNITS.INTERSTITIAL);
-  _interstitial.addAdEventListener(AdEventType.LOADED, () => { _interstitialReady = true; });
-  _interstitial.addAdEventListener(AdEventType.ERROR, () => {
+  _interstitial.addAdEventListener(AdEventType.LOADED,  () => { _interstitialReady = true; });
+  _interstitial.addAdEventListener(AdEventType.ERROR,   () => {
     _interstitialReady = false;
     setTimeout(loadInterstitial, 30000);
   });
-  _interstitial.addAdEventListener(AdEventType.CLOSED, () => {
+  _interstitial.addAdEventListener(AdEventType.CLOSED,  () => {
     _interstitialReady = false;
     loadInterstitial();
   });
@@ -41,13 +41,13 @@ export function onPhotoCaptured() {
 }
 
 // ── Rewarded (unlock PDF export) ─────────────────────────────────────────
-let _rewarded = null;
+let _rewarded      = null;
 let _rewardedReady = false;
 
 export function loadRewarded() {
   _rewarded = RewardedAd.createForAdRequest(AD_UNITS.REWARDED);
   _rewarded.addAdEventListener(RewardedAdEventType.LOADED, () => { _rewardedReady = true; });
-  _rewarded.addAdEventListener(RewardedAdEventType.ERROR, () => {
+  _rewarded.addAdEventListener(RewardedAdEventType.ERROR,  () => {
     _rewardedReady = false;
     setTimeout(loadRewarded, 30000);
   });
@@ -58,9 +58,27 @@ export function loadRewarded() {
   _rewarded.load();
 }
 
+// FIX: track whether the reward was actually earned before the ad closed.
+// Previously onEarned could fire even when the user dismissed the ad early.
 export function showRewarded(onEarned) {
   if (!_rewardedReady || !_rewarded) return false;
-  _rewarded.addAdEventListener(RewardedAdEventType.EARNED_REWARD, onEarned);
+
+  let earned = false;
+
+  const earnedSub = _rewarded.addAdEventListener(
+    RewardedAdEventType.EARNED_REWARD,
+    () => { earned = true; }
+  );
+
+  const closedSub = _rewarded.addAdEventListener(
+    RewardedAdEventType.CLOSED,
+    () => {
+      earnedSub?.();   // remove listener
+      closedSub?.();   // remove listener
+      if (earned) onEarned();
+    }
+  );
+
   _rewarded.show();
   return true;
 }
