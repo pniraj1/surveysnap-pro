@@ -8,10 +8,10 @@ import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import {
   useFonts,
-  CormorantGarant_600SemiBold,
-  CormorantGarant_700Bold,
-  CormorantGarant_700Bold_Italic,
-} from '@expo-google-fonts/cormorant-garant';
+  CormorantGaramond_600SemiBold,
+  CormorantGaramond_700Bold,
+  CormorantGaramond_700Bold_Italic,
+} from '@expo-google-fonts/cormorant-garamond';
 import {
   Nunito_400Regular,
   Nunito_600SemiBold,
@@ -49,9 +49,9 @@ export default function App() {
   const [ready, setReady] = useState(false);
 
   const [fontsLoaded, fontError] = useFonts({
-    CormorantGarant_600SemiBold,
-    CormorantGarant_700Bold,
-    CormorantGarant_700Bold_Italic,
+    CormorantGaramond_600SemiBold,
+    CormorantGaramond_700Bold,
+    CormorantGaramond_700Bold_Italic,
     Nunito_400Regular,
     Nunito_600SemiBold,
     Nunito_700Bold,
