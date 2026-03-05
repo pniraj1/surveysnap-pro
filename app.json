@@ -39,13 +39,12 @@
       "favicon": "./assets/icon.png"
     },
     "plugins": [
-      [
-        "react-native-google-mobile-ads",
-        {
-          "androidAppId": "ca-app-pub-6365268430069678~9213608900",
-          "iosAppId": "ca-app-pub-6365268430069678~9213608900"
-        }
-      ],
+      ["expo-build-properties", {
+    "android": {
+      "compileSdkVersion": 35,
+      "targetSdkVersion": 35
+    }
+  }],
       [
         "expo-camera",
         {
