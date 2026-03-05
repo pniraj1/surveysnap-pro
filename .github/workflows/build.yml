@@ -32,6 +32,9 @@ jobs:
       - name: Prebuild Android
         run: npx expo prebuild --platform android --clean
 
+      - name: Set targetSdkVersion 35
+        run: sed -i 's/targetSdk = 34/targetSdk = 35/g' android/app/build.gradle
+
       - name: Decode keystore
         run: echo "${{ secrets.KEYSTORE_FILE }}" | base64 --decode > android/app/surveysnap.jks
 
