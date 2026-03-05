@@ -22,6 +22,7 @@
         "backgroundColor": "#06080F"
       },
       "package": "com.surveysnap.pro",
+      "targetSdkVersion": 35,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "CAMERA",
