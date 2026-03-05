@@ -4,7 +4,8 @@ import {
   View, Text, StyleSheet, TouchableOpacity, Alert,
   Animated, Dimensions, StatusBar, Switch,
 } from 'react-native';
-import { Camera, CameraType, FlashMode } from 'expo-camera';
+// expo-camera v16 (Expo 52): Camera → CameraView, CameraType/FlashMode removed
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Colors, Typography, Spacing, Radii, Shadow } from '../theme';
@@ -12,40 +13,45 @@ import { PRESETS, DEFAULT_PRESET, compressImage } from '../utils/compress';
 import { getLocation, coordLabel } from '../utils/location';
 import { savePhoto } from '../utils/fs';
 import { onPhotoCaptured } from '../utils/admob';
-import { loadSettings } from '../utils/settings';  // FIX: read persisted settings
+import { loadSettings } from '../utils/settings';
 
 const { width, height } = Dimensions.get('window');
+
+// Flash cycles: off → on → auto
+const FLASH_CYCLE = { off: 'on', on: 'auto', auto: 'off' };
+const FLASH_LABEL = { off: '⚡ Off', on: '⚡ On', auto: '⚡ Auto' };
+const FLASH_COLOR = (flash, Colors) => ({
+  off: Colors.textMuted, on: Colors.amber, auto: Colors.cyan,
+}[flash]);
 
 export default function CameraScreen({ route, navigation }) {
   const { folderDir, folderName, projectId, projectName } = route.params;
   const camRef = useRef(null);
 
-  const [hasPerm, setHasPerm]       = useState(null);
-  const [preset, setPreset]         = useState(DEFAULT_PRESET);
-  const [showPresets, setShowPresets] = useState(false);
-  const [flash, setFlash]           = useState(FlashMode.off);
-  const [facing, setFacing]         = useState(CameraType.back);
-  const [capturing, setCapturing]   = useState(false);
-  const [photoCount, setPhotoCount] = useState(0);
-  const [locationOn, setLocationOn] = useState(true);
-  const [watermarkOn, setWatermarkOn] = useState(false);
-  const [currentLoc, setCurrentLoc] = useState(null);
-  const [showOptions, setShowOptions] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const [preset, setPreset]             = useState(DEFAULT_PRESET);
+  const [showPresets, setShowPresets]   = useState(false);
+  const [flash, setFlash]               = useState('off');   // 'off' | 'on' | 'auto'
+  const [facing, setFacing]             = useState('back');  // 'back' | 'front'
+  const [capturing, setCapturing]       = useState(false);
+  const [photoCount, setPhotoCount]     = useState(0);
+  const [locationOn, setLocationOn]     = useState(true);
+  const [watermarkOn, setWatermarkOn]   = useState(false);
+  const [currentLoc, setCurrentLoc]     = useState(null);
+  const [showOptions, setShowOptions]   = useState(false);
 
-  const shutterScale   = useRef(new Animated.Value(1)).current;
-  const flashOpacity   = useRef(new Animated.Value(0)).current;
+  const shutterScale = useRef(new Animated.Value(1)).current;
+  const flashOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     (async () => {
-      // FIX: load saved settings and apply as defaults
       const settings = await loadSettings();
       const savedPreset = PRESETS.find(p => p.id === settings.defaultPreset) || DEFAULT_PRESET;
       setPreset(savedPreset);
       setLocationOn(settings.locationDefault);
       setWatermarkOn(settings.watermarkDefault);
 
-      const { status } = await Camera.requestCameraPermissionsAsync();
-      setHasPerm(status === 'granted');
+      if (!permission?.granted) await requestPermission();
 
       if (settings.locationDefault) {
         const loc = await getLocation();
@@ -86,7 +92,7 @@ export default function CameraScreen({ route, navigation }) {
         lng:       locationOn && currentLoc ? currentLoc.lng : undefined,
         watermark: watermarkOn,
       };
-      const saved = await savePhoto(folderDir, compressed.uri, opts);
+      await savePhoto(folderDir, compressed.uri, opts);
       setPhotoCount(c => c + 1);
       onPhotoCaptured();
     } catch (e) {
@@ -97,27 +103,33 @@ export default function CameraScreen({ route, navigation }) {
     }
   };
 
-  const cycleFlash = () => setFlash(f =>
-    f === FlashMode.off ? FlashMode.on : f === FlashMode.on ? FlashMode.auto : FlashMode.off
-  );
+  if (!permission) return <View style={styles.noPerm} />;
 
-  const flashColor = flash === FlashMode.on ? Colors.amber : flash === FlashMode.auto ? Colors.cyan : Colors.textMuted;
-  const flashLabel = flash === FlashMode.on ? '⚡ On' : flash === FlashMode.auto ? '⚡ Auto' : '⚡ Off';
-
-  if (hasPerm === false) {
+  if (!permission.granted) {
     return (
       <View style={styles.noPerm}>
         <Text style={styles.noPermTxt}>Camera permission denied.</Text>
         <Text style={styles.noPermSub}>Enable in Settings → Apps → SurveySnap Pro</Text>
+        <TouchableOpacity onPress={requestPermission} style={styles.permBtn}>
+          <Text style={styles.permBtnTxt}>Grant Permission</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
+  const flashColor = FLASH_COLOR(flash, Colors);
+  const flashLabel = FLASH_LABEL[flash];
+
   return (
     <View style={styles.root}>
       <StatusBar hidden />
-      <Camera ref={camRef} style={styles.camera} type={facing} flashMode={flash}>
-
+      {/* expo-camera v16: CameraView with facing/flash string props */}
+      <CameraView
+        ref={camRef}
+        style={styles.camera}
+        facing={facing}
+        flash={flash}
+      >
         <Animated.View style={[styles.flashOverlay, { opacity: flashOpacity }]} pointerEvents="none" />
 
         {/* ── Top bar ── */}
@@ -131,7 +143,7 @@ export default function CameraScreen({ route, navigation }) {
                 <Text style={styles.topFolder} numberOfLines={1}>{folderName}</Text>
                 <Text style={styles.topCount}>{photoCount} captured this session</Text>
               </View>
-              <TouchableOpacity style={styles.topBtn} onPress={cycleFlash}>
+              <TouchableOpacity style={styles.topBtn} onPress={() => setFlash(f => FLASH_CYCLE[f])}>
                 <Text style={[styles.topBtnTxt, { color: flashColor }]}>{flashLabel}</Text>
               </TouchableOpacity>
             </View>
@@ -150,8 +162,8 @@ export default function CameraScreen({ route, navigation }) {
         <View style={styles.crosshair} pointerEvents="none">
           {['TL', 'TR', 'BL', 'BR'].map(pos => (
             <View key={pos} style={[styles.corner,
-              pos.includes('T') ? { top: '30%' }    : { bottom: '30%' },
-              pos.includes('L') ? { left: '20%' }   : { right: '20%' },
+              pos.includes('T') ? { top: '30%' } : { bottom: '30%' },
+              pos.includes('L') ? { left: '20%' } : { right: '20%' },
               pos.includes('T') && pos.includes('L') && { borderTopWidth: 1.5, borderLeftWidth: 1.5 },
               pos.includes('T') && pos.includes('R') && { borderTopWidth: 1.5, borderRightWidth: 1.5 },
               pos.includes('B') && pos.includes('L') && { borderBottomWidth: 1.5, borderLeftWidth: 1.5 },
@@ -249,14 +261,14 @@ export default function CameraScreen({ route, navigation }) {
             </Animated.View>
 
             <TouchableOpacity style={styles.sideBtn}
-              onPress={() => setFacing(f => f === CameraType.back ? CameraType.front : CameraType.back)}>
+              onPress={() => setFacing(f => f === 'back' ? 'front' : 'back')}>
               <Text style={styles.sideBtnIco}>⟳</Text>
               <Text style={styles.sideBtnTxt}>Flip</Text>
             </TouchableOpacity>
           </View>
           <SafeAreaView edges={['bottom']} />
         </LinearGradient>
-      </Camera>
+      </CameraView>
     </View>
   );
 }
@@ -267,7 +279,9 @@ const styles = StyleSheet.create({
   camera: { flex: 1 },
   noPerm:    { flex: 1, backgroundColor: Colors.bg, alignItems: 'center', justifyContent: 'center', padding: 32 },
   noPermTxt: { ...Typography.heading, color: Colors.textPrimary, textAlign: 'center', marginBottom: 8 },
-  noPermSub: { ...Typography.uiLight, color: Colors.textMuted, textAlign: 'center' },
+  noPermSub: { ...Typography.uiLight, color: Colors.textMuted, textAlign: 'center', marginBottom: 24 },
+  permBtn:   { borderRadius: Radii.pill, borderWidth: 1, borderColor: Colors.blue, paddingHorizontal: 24, paddingVertical: 12 },
+  permBtnTxt:{ ...Typography.uiBold, color: Colors.blue, fontSize: 13 },
 
   flashOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#fff', zIndex: 100 },
 
@@ -283,20 +297,20 @@ const styles = StyleSheet.create({
   locDot: { color: Colors.cyan, fontSize: 7 },
   locTxt: { ...Typography.mono, color: Colors.cyan, fontSize: 9 },
 
-  crosshair:  { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
-  corner:     { position: 'absolute', width: CORNER_SIZE, height: CORNER_SIZE, borderColor: Colors.cyan, borderWidth: 0 },
-  crossH:     { position: 'absolute', top: '50%', left: '20%', right: '20%', height: 0.5, backgroundColor: Colors.cyan, opacity: 0.4 },
-  crossV:     { position: 'absolute', left: '50%', top: '30%', bottom: '30%', width: 0.5, backgroundColor: Colors.cyan, opacity: 0.4 },
-  centreDot:  { width: 5, height: 5, borderRadius: 99, backgroundColor: Colors.cyan, opacity: 0.7 },
+  crosshair: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' },
+  corner:    { position: 'absolute', width: CORNER_SIZE, height: CORNER_SIZE, borderColor: Colors.cyan, borderWidth: 0 },
+  crossH:    { position: 'absolute', top: '50%', left: '20%', right: '20%', height: 0.5, backgroundColor: Colors.cyan, opacity: 0.4 },
+  crossV:    { position: 'absolute', left: '50%', top: '30%', bottom: '30%', width: 0.5, backgroundColor: Colors.cyan, opacity: 0.4 },
+  centreDot: { width: 5, height: 5, borderRadius: 99, backgroundColor: Colors.cyan, opacity: 0.7 },
 
-  bottomBar:   { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: Spacing.md },
-  presetBar:   { borderRadius: Radii.pill, overflow: 'hidden', alignSelf: 'center', borderWidth: 0.5, borderColor: Colors.border, marginBottom: Spacing.sm },
-  presetBarGrad: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, gap: 7 },
-  presetDot:   { width: 8, height: 8, borderRadius: 99 },
-  presetName:  { ...Typography.uiBold, color: Colors.textPrimary, fontSize: 12 },
-  presetTag:   { ...Typography.label, fontSize: 8 },
-  presetSub:   { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
-  presetArrow: { color: Colors.textMuted, fontSize: 8, marginLeft: 2 },
+  bottomBar:    { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: Spacing.md },
+  presetBar:    { borderRadius: Radii.pill, overflow: 'hidden', alignSelf: 'center', borderWidth: 0.5, borderColor: Colors.border, marginBottom: Spacing.sm },
+  presetBarGrad:{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 8, gap: 7 },
+  presetDot:    { width: 8, height: 8, borderRadius: 99 },
+  presetName:   { ...Typography.uiBold, color: Colors.textPrimary, fontSize: 12 },
+  presetTag:    { ...Typography.label, fontSize: 8 },
+  presetSub:    { ...Typography.caption, color: Colors.textMuted, fontSize: 9 },
+  presetArrow:  { color: Colors.textMuted, fontSize: 8, marginLeft: 2 },
 
   presetsDropdown: { backgroundColor: 'rgba(11,18,32,0.97)', borderRadius: Radii.lg, borderWidth: 0.5, borderColor: Colors.border, marginBottom: Spacing.sm, overflow: 'hidden' },
   presetOpt:       { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm, borderBottomWidth: 0.5, borderBottomColor: Colors.borderSubtle },
@@ -308,11 +322,11 @@ const styles = StyleSheet.create({
   presetCheck:     { fontSize: 14 },
 
   optionsPanel: { backgroundColor: 'rgba(11,18,32,0.97)', borderRadius: Radii.lg, borderWidth: 0.5, borderColor: Colors.border, marginBottom: Spacing.sm, overflow: 'hidden' },
-  optRow:    { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm },
-  optIcon:   { fontSize: 18, width: 28 },
-  optInfo:   { flex: 1 },
-  optLabel:  { ...Typography.ui, color: Colors.textPrimary, fontSize: 13 },
-  optSub:    { ...Typography.caption, color: Colors.textMuted, fontSize: 10 },
+  optRow:   { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, gap: Spacing.sm },
+  optIcon:  { fontSize: 18, width: 28 },
+  optInfo:  { flex: 1 },
+  optLabel: { ...Typography.ui, color: Colors.textPrimary, fontSize: 13 },
+  optSub:   { ...Typography.caption, color: Colors.textMuted, fontSize: 10 },
   optDivider:{ height: 0.5, backgroundColor: Colors.borderSubtle, marginHorizontal: Spacing.md },
 
   controls:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: Spacing.lg },
