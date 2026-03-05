@@ -1,5 +1,6 @@
 // src/utils/compress.js
-import * as ImageManipulator from 'expo-image-manipulator';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import * as FileSystem from 'expo-file-system';
 
 export const PRESETS = [
   {
@@ -47,18 +48,20 @@ export const PRESETS = [
 
 export const DEFAULT_PRESET = PRESETS.find(p => p.default);
 
+// expo-image-manipulator v13 (Expo 52) uses a new builder API
 export async function compressImage(uri, preset) {
   const p = preset || DEFAULT_PRESET;
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ resize: { width: p.maxW } }],
-    { compress: p.quality, format: ImageManipulator.SaveFormat.JPEG }
-  );
+  const context = ImageManipulator.manipulate(uri);
+  context.resize({ width: p.maxW });
+  const image = await context.renderAsync();
+  const result = await image.saveAsync({
+    compress: p.quality,
+    format: SaveFormat.JPEG,
+  });
   return result; // { uri, width, height }
 }
 
 // Convert file uri → base64 for PDF embedding
-import * as FileSystem from 'expo-file-system';
 export async function toBase64(uri) {
   const b64 = await FileSystem.readAsStringAsync(uri, {
     encoding: FileSystem.EncodingType.Base64,
